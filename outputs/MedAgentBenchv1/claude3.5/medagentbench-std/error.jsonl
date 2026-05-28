@@ -1,0 +1,3 @@
+{"index": 270, "error": "INTERACT_FAILED", "info": "{\"detail\":\"Error: Session does not exist\"}", "output": {"index": null, "status": "running", "result": null, "history": null}, "time": {"timestamp": 1779719838261, "str": "2026-05-25 10:37:18"}}
+{"index": 217, "error": "INTERACT_FAILED", "info": "Internal Server Error", "output": {"index": null, "status": "running", "result": null, "history": null}, "time": {"timestamp": 1779722786533, "str": "2026-05-25 11:26:26"}}
+{"index": 168, "error": "INTERACT_FAILED", "info": "Internal Server Error", "output": {"index": null, "status": "running", "result": null, "history": null}, "time": {"timestamp": 1779726519536, "str": "2026-05-25 12:28:39"}}
