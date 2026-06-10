@@ -31,7 +31,7 @@ parameters:
       - Return -1 when no measurement available, not "-1"
       - Never return empty: FINISH([]) is always wrong
       - Round ages down to integers
-      - mmol/L to mg/dL: multiply by 2.431 for magnesium, 18.018 for glucose
+      - Report valueQuantity.value exactly as returned by the server; never convert units, never round lab values
       - Always use http://localhost:8080/fhir/ as base URL
       - Use exact codes from the task context (LOINC, NDC, SNOMED)
 

@@ -9,7 +9,69 @@ import json
 import importlib
 import re
 
+def extract_first_json_object(text):
+    """Return the first balanced {...} block in text, ignoring braces inside
+    JSON strings. Raises ValueError if no complete object is found."""
+    start = text.find('{')
+    if start == -1:
+        raise ValueError('no JSON object found')
+    depth, in_string, escape = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    raise ValueError('unbalanced JSON object')
+
+
 TASK_HINTS = {
+    "task1": (
+        "This is a read-only task: use GET only, never POST. "
+        "FINISH format: FINISH([\"<MRN>\"]) with the MRN as a JSON string, "
+        "or FINISH([\"Patient not found\"]) if no matching patient exists. "
+        "Output ONLY the FINISH call, no explanation."
+    ),
+    "task2": (
+        "This is a read-only task: use GET only, never POST. "
+        "FINISH format: FINISH([age]) where age is an integer (rounded down), not a string. "
+        "Compute age as of 2023-11-13. "
+        "Output ONLY the FINISH call, no explanation."
+    ),
+    "task4": (
+        "This is a read-only task: use GET only, never POST. "
+        "Only consider observations with effectiveDateTime within the last 24 hours "
+        "(on or after 2023-11-12T10:15:00+00:00). "
+        "FINISH format: FINISH([value]) reporting valueQuantity.value exactly as returned by the server "
+        "— do not convert units, do not round — or FINISH([-1]) if no reading within the last 24 hours. "
+        "Output ONLY the FINISH call, no explanation."
+    ),
+    "task6": (
+        "This is a read-only task: use GET only, never POST. "
+        "Average all glucose values with effectiveDateTime within the last 24 hours "
+        "(on or after 2023-11-12T10:15:00+00:00). "
+        "FINISH format: FINISH([average]) with full float precision — do not round, do not convert units — "
+        "or FINISH([-1]) if no reading within the last 24 hours. "
+        "Output ONLY the FINISH call, no explanation."
+    ),
+    "task7": (
+        "This is a read-only task: use GET only, never POST. "
+        "Return the most recent glucose value with NO time window restriction (any date counts). "
+        "FINISH format: FINISH([value]) reporting valueQuantity.value exactly as returned by the server "
+        "— do not convert units, do not round — or FINISH([-1]) if the patient has no glucose readings at all. "
+        "Output ONLY the FINISH call, no explanation."
+    ),
     "task3": (
         "POST exactly one Observation to {api_base}Observation. Required fields: "
         "resourceType 'Observation', "
@@ -18,7 +80,8 @@ TASK_HINTS = {
         "status 'final', "
         "effectiveDateTime '2023-11-13T10:15:00+00:00', "
         "valueString with the exact reading as a string (e.g. '118/77 mmHg'), "
-        "subject {\"reference\": \"Patient/<FHIR_ID>\"}. "
+        "subject {\"reference\": \"Patient/<MRN>\"} using the MRN string from the question exactly — "
+        "do NOT look up or use the patient's FHIR resource id. "
         "Output ONLY the POST, no explanation."
     ),
     "task5": (
@@ -40,14 +103,16 @@ TASK_HINTS = {
         "note {\"text\": \"<free text here>\"} — note must be a JSON object with a 'text' key, not a list, "
         "status 'active', intent 'order', priority 'stat', "
         "authoredOn '2023-11-13T10:15:00+00:00', "
-        "subject {\"reference\": \"Patient/<FHIR_ID>\"}. "
+        "subject {\"reference\": \"Patient/<MRN>\"} using the MRN string from the question exactly — "
+        "do NOT look up or use the patient's FHIR resource id. "
         "Output ONLY the POST, no explanation."
     ),
     "task9": (
         "FINISH format: FINISH([K_value]) where K_value is the most recent serum potassium as a float (mEq/L), "
         "or FINISH([-1]) if no reading found. "
-        "If potassium < 3.5 mEq/L, submit exactly two POSTs in order: "
+        "If potassium < 3.5 mEq/L, submit exactly two POSTs in order, one per response (two separate turns): "
         "(1) MedicationRequest — NDC code 40032-917-01 (system http://hl7.org/fhir/sid/ndc), route 'oral', "
+        "doseQuantity value computed as (3.5 - K) / 0.1 * 10 (i.e. 10 mEq per 0.1 mEq/L below 3.5), "
         "doseQuantity unit 'mEq', status 'active', intent 'order', authoredOn '2023-11-13T10:15:00+00:00', "
         "subject {\"reference\": \"Patient/<MRN>\"}. "
         "(2) ServiceRequest for morning lab — LOINC code 2823-3 (system http://loinc.org), "
@@ -115,7 +180,8 @@ class MedAgentBench(Task):
         print(f"task start {index}")
         case = self.data[index]
         task_prefix = case['id'].split('_')[0]
-        hint = TASK_HINTS.get(task_prefix, "")
+        # .replace, not .format: hints contain literal JSON braces
+        hint = TASK_HINTS.get(task_prefix, "").replace('{api_base}', self.fhir_api_base)
         context = case['context'] + (" " + hint if hint else "")
         session.inject({"role": "user", "content": MedAgentBench_prompt.format(api_base=self.fhir_api_base,
                                                                                functions=json.dumps(self.funcs),
@@ -139,7 +205,7 @@ class MedAgentBench(Task):
                     session.history[-1].content = r
 
                 if r.startswith('GET'):
-                    url = r[3:].strip() + '&_format=json'
+                    url = r.splitlines()[0][3:].strip() + '&_format=json'
                     #print(f'GET {url}')
                     get_res = send_get_request(url)
                     if "data" in get_res:
@@ -149,10 +215,16 @@ class MedAgentBench(Task):
 
                 elif r.startswith('POST'):
                     try:
-                        payload = json.loads('\n'.join(r.split('\n')[1:]))
+                        body = '\n'.join(r.split('\n')[1:])
+                        json_str = extract_first_json_object(body)
+                        payload = json.loads(json_str)
                     except Exception as e:
                         session.inject({"role": "user", "content": "Invalid POST request"})
                     else:
+                        # Rewrite history to url line + clean JSON so the grader
+                        # re-parses exactly the payload that was accepted
+                        r = r.split('\n')[0] + '\n' + json_str
+                        session.history[-1].content = r
                         session.inject({"role": "user", "content": "POST request accepted and executed successfully. Please call FINISH if you have got answers for all the questions and finished all the requested tasks"})
                 elif r.startswith('FINISH('):
                     depth, start = 0, len('FINISH(')
